@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    // Custom claims set server-side after OTP/staff login: collegeCode, role, rollNumber
+    function tenant(c) { return request.auth != null && request.auth.token.collegeCode == c; }
+    function role() { return request.auth.token.role; }
+    function staff() { return role() in ['FEE_COUNTER', 'TEACHER', 'HOD_ADMIN']; }
+    function self(roll) { return request.auth.token.rollNumber == roll; }
+
+    match /colleges/{c} {
+      allow read: if tenant(c);
+
+      match /config/{doc} {
+        allow read: if tenant(c);
+        allow write: if tenant(c) && role() == 'HOD_ADMIN';
+      }
+      match /classes/{k}/students/{roll} {
+        allow read: if tenant(c) && (staff() || self(roll));
+        allow create, delete: if tenant(c) && role() == 'HOD_ADMIN';
+        allow update: if tenant(c) && staff();           // students can never edit wallet/profile
+        match /transactions/{t} {
+          allow read: if tenant(c) && (staff() || self(roll));
+          allow create: if tenant(c) && self(roll) && request.resource.data.verifiedStatus == 'PENDING';
+          allow update: if tenant(c) && staff();
+        }
+      }
+      match /staff/{id} {
+        allow read: if tenant(c) && staff();
+        allow write: if tenant(c) && role() == 'HOD_ADMIN';
+      }
+      match /escalations/{id} {
+        allow create: if tenant(c);
+        allow read: if tenant(c) && (staff() || self(resource.data.rollNumber));
+        allow update: if tenant(c) && role() == 'HOD_ADMIN';   // HITL approve / reject
+      }
+    }
+  }
+}
